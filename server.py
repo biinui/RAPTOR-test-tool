@@ -12,11 +12,12 @@ import socket
 import sys
 import argparse
 import os
+import pathlib
 
 from threading import Thread
 
 HOST = ''
-SOCKETSIZE = 1024
+SOCKETSIZE = 4096
 
 
 class RaptorConnection(Thread):
@@ -28,10 +29,12 @@ class RaptorConnection(Thread):
 
     def run(self):
         try:
-            print >> sys.stderr, 'connection from', self.caddress
+            print('connection from', self.caddress, file=sys.stderr)
             data = self.conn.recv(SOCKETSIZE)
+            data = data.split("\r\n".encode())[0]
+            data = data.decode()
             if data:
-                print >> sys.stderr, "%s: %s" % (self.caddress[0], data)
+                print("%s: %s" % (self.caddress[0], data), file=sys.stderr)
                 self.handledata(data)
         finally:
             # Clean up the connection
@@ -47,7 +50,8 @@ class RaptorConnection(Thread):
         data = data.strip().lower()
         if not data:
             return
-        if data == 'directory':
+        # if data == 'directory':
+        if 'directory' in data:
             self.directory()
         elif data == 'ping':
             self.pong()
@@ -61,12 +65,17 @@ class RaptorConnection(Thread):
         :param data: string representing the filename
         :return:
         """
-        fpath = "%s/%s" % (self.path, data.lower())
-        if not os.path.isdir(fpath):
+
+        fpath = os.path.join(self.path.strip(), data.strip())
+        print("spath: " + str(self.path.encode()))
+        print("data: " + str(data.encode()))
+        print("fpath: " + str(fpath.encode()))
+        if not os.path.isdir(fpath.encode()):
             self.conn.sendall("INVALID COMMAND OR ASSIGNMENT\r\n")
             return
         # valid test folder
-        self.conn.sendall('%d\r\n' % RaptorConnection.countdirs(fpath))
+        tosend = '%d\r\n' % RaptorConnection.countdirs(fpath)
+        self.conn.sendall(tosend.encode())
 
         for dir in RaptorConnection.getdirs(fpath):
             self.handletest(dir)
@@ -80,11 +89,17 @@ class RaptorConnection(Thread):
         """
         name = os.path.split(dir)[1]
         #send test data from in.txt
-        with open(dir + '/in.txt', 'r') as f:
+        tmp = str(dir) + '/in.txt'
+        tmp = os.path.abspath(tmp)
+
+        with open(tmp, 'r') as f:
             data = f.readlines()
             for line in data:
-                self.conn.sendall(line.replace('\n', '\r\n'))
-            self.conn.sendall('EOF\r\n')
+                print("handletest.send: " + line)
+                line = line.strip()
+                line = line + "\r\n"
+                self.conn.sendall(line.encode())
+            self.conn.sendall("EOF\r\n".encode())
 
         data = ''
         resp = []
@@ -92,7 +107,9 @@ class RaptorConnection(Thread):
         #recieve test data response until EOF is reached
         while not done:
             data = self.conn.recv(SOCKETSIZE)
+            data = data.decode()
             for s in data.split('\r\n'):
+                print("handletest.rcv: " + s)
                 if s.lower() == 'eof':
                     done = True
                     break
@@ -114,7 +131,9 @@ class RaptorConnection(Thread):
                     correct = False
                 i += 1
         correct = "CORRECT" if correct else "INCORRECT"
-        self.conn.sendall(correct + '\r\n')
+        correct = correct + '\r\n'
+        correct = correct.encode()
+        self.conn.sendall(correct)
 
     @staticmethod
     def countdirs(path):
@@ -157,8 +176,9 @@ class RaptorConnection(Thread):
                 continue
             if not os.path.isdir(self.path + '/' + f):
                 continue
-            self.conn.sendall(f + "\r\n")
-        self.conn.sendall("EOF\r\n")
+            f = f + "\r\n"
+            self.conn.sendall(f.encode())
+        self.conn.sendall("EOF\r\n".encode())
 
     def pong(self):
         self.conn.sendall('PONG!\r\n')
@@ -170,7 +190,7 @@ def main():
     parser.add_argument('-p', '--path', metavar='folderpath', type=str, help='Path to RAPTOR assignments directory.')
     parser.add_argument('--port', metavar='port', type=int, help='Port number to host server from.  By default the port is 10000.')
 
-    print >> sys.stderr, "-->To quit press ctrl-c"
+    print("-->To quit press ctrl-c", file=sys.stderr)
     args = parser.parse_args()
 
     path = args.path
@@ -180,21 +200,21 @@ def main():
         port = 10000
 
     while not path:
-        print "Please enter the path to the RAPTOR test directory.  Press enter to use the current directory."
-        path = raw_input("directory [%s]: " % os.path.abspath(os.curdir))
+        print("Please enter the path to the RAPTOR test directory.  Press enter to use the current directory.")
+        path = input("directory [%s]: " % os.path.abspath(os.curdir))
         if not path:
             os.curdir
         if not os.path.isdir(path):
             path = False
 
     path = os.path.abspath(path)
-
+    print("path: " + path)
     # Create a TCP/IP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # Bind the socket to the port
     server_address = (HOST, port)
-    print >> sys.stderr, 'starting up on %s port %s' % server_address
+    print('starting up on %s port %s' % server_address, file=sys.stderr)
     sock.bind(server_address)
 
     # Listen for incoming connections
@@ -215,4 +235,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
